@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>代理池管理</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh}
+.navbar{background:#1e293b;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #334155;position:sticky;top:0;z-index:10}
+.navbar h1{font-size:18px;font-weight:700;color:#38bdf8}
+.key-row{display:flex;gap:8px;align-items:center}
+.key-row span{font-size:12px;color:#64748b}
+.key-row input{background:#0f172a;border:1px solid #475569;color:#e2e8f0;padding:6px 12px;border-radius:6px;font-size:13px;width:200px}
+.container{padding:24px;max-width:1400px;margin:0 auto}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:18px}
+.stat-card{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:16px;text-align:center}
+.stat-card .val{font-size:30px;font-weight:700;color:#38bdf8}
+.stat-card .lbl{font-size:12px;color:#64748b;margin-top:4px}
+.refreshing .val{color:#f59e0b!important}
+.progress{height:3px;background:#1e293b;border-radius:2px;overflow:hidden;margin-bottom:18px}
+.progress-bar{height:100%;background:#0ea5e9;transition:width .5s}
+.card{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:18px;margin-bottom:16px}
+.card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.card-header h2{font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.8px}
+.btn{padding:7px 14px;border-radius:6px;border:none;cursor:pointer;font-size:13px;font-weight:500;transition:opacity .15s}
+.btn:hover{opacity:.85}.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-blue{background:#0ea5e9;color:#fff}
+.btn-green{background:#22c55e;color:#fff}
+.btn-red{background:#ef4444;color:#fff}
+.btn-gray{background:#475569;color:#fff}
+.btn-sm{padding:3px 9px;font-size:12px}
+.flex{display:flex;gap:8px;align-items:center}
+.flex input,.flex select{background:#0f172a;border:1px solid #475569;color:#e2e8f0;padding:7px 11px;border-radius:6px;font-size:13px}
+.flex input{flex:1}
+.cfg-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.cfg-item label{display:block;font-size:12px;color:#64748b;margin-bottom:4px}
+.cfg-item input{width:100%;background:#0f172a;border:1px solid #475569;color:#e2e8f0;padding:7px 11px;border-radius:6px;font-size:13px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:8px 12px;color:#475569;border-bottom:1px solid #334155;font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+td{padding:8px 12px;border-bottom:1px solid #0f172a;font-family:monospace;font-size:13px}
+tr:hover td{background:#1a2640}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700}
+.bg{background:#14532d;color:#86efac}
+.by{background:#713f12;color:#fde68a}
+.br{background:#7f1d1d;color:#fca5a5}
+.result-box{background:#0f172a;border:1px solid #334155;border-radius:6px;padding:12px;font-size:13px;font-family:monospace;min-height:52px;white-space:pre-wrap;color:#86efac}
+.result-box.err{color:#f87171}
+.alert{padding:9px 13px;border-radius:6px;font-size:13px;margin-top:10px}
+.ok{background:#14532d;color:#86efac}
+.fail{background:#7f1d1d;color:#fca5a5}
+</style>
+</head>
+<body>
+<div class="navbar">
+  <h1>&#127759; 代理池管理</h1>
+  <div class="key-row">
+    <span>API Key</span>
+    <input type="password" id="apiKey" placeholder="输入 API Key" />
+    <button class="btn btn-blue" onclick="saveKey()">确认</button>
+  </div>
+</div>
+<div class="container">
+  <div class="stats-grid">
+    <div class="stat-card"><div class="val" id="sw">-</div><div class="lbl">可用代理</div></div>
+    <div class="stat-card" id="sc"><div class="val" id="ss">-</div><div class="lbl">状态</div></div>
+    <div class="stat-card"><div class="val" id="st">-</div><div class="lbl">累计测试</div></div>
+    <div class="stat-card"><div class="val" id="sn">-</div><div class="lbl">下次刷新(s)</div></div>
+  </div>
+  <div class="progress"><div class="progress-bar" id="pb" style="width:0%"></div></div>
+
+  <div class="card">
+    <div class="card-header">
+      <h2>操作</h2>
+      <div class="flex" style="flex:0">
+        <button class="btn btn-blue" onclick="loadProxies()">&#8635; 刷新列表</button>
+        <button class="btn btn-green" id="btnR" onclick="triggerRefresh()">&#9889; 触发刷新</button>
+        <button class="btn btn-gray" onclick="getOne()">&#127922; 随机获取</button>
+      </div>
+    </div>
+    <div id="mainAlert"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h2>测试代理</h2></div>
+    <div class="flex" style="margin-bottom:12px">
+      <input type="text" id="testInput" placeholder="host:port 或 http://host:port" />
+      <button class="btn btn-blue" onclick="doTest()">测试</button>
+      <button class="btn btn-gray" onclick="testRandom()">随机测试</button>
+    </div>
+    <div class="result-box" id="testResult">等待测试...</div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h2>手动添加代理</h2></div>
+    <div class="flex">
+      <input type="text" id="addHost" placeholder="host:port" />
+      <input type="text" id="addCC" placeholder="国家代码(可选)" style="max-width:140px;flex:0" />
+      <button class="btn btn-green" onclick="addProxy()">+ 添加</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h2>运行配置</h2><button class="btn btn-blue" onclick="saveConfig()">保存配置</button></div>
+    <div class="cfg-grid">
+      <div class="cfg-item"><label>刷新间隔 (秒)</label><input type="number" id="ci" /></div>
+      <div class="cfg-item"><label>并发测试数</label><input type="number" id="cw" /></div>
+      <div class="cfg-item"><label>超时 (秒)</label><input type="number" id="ct" /></div>
+      <div class="cfg-item"><label>测试 URL</label><input type="text" id="cu" /></div>
+    </div>
+    <div id="cfgAlert"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h2>代理列表</h2>
+      <span id="cnt" style="font-size:13px;color:#475569"></span>
+    </div>
+    <div class="flex" style="margin-bottom:12px">
+      <input type="text" id="fHost" placeholder="搜索 IP/端口..." oninput="render()" style="max-width:220px;flex:0" />
+      <select id="fCC" onchange="render()"><option value="">所有国家</option></select>
+      <select id="fSpd" onchange="render()">
+        <option value="">所有速度</option>
+        <option value="f">&lt;1s 快速</option>
+        <option value="m">1-3s 中速</option>
+        <option value="s">&gt;3s 慢速</option>
+      </select>
+      <button class="btn btn-gray btn-sm" onclick="exportList()">&#8595; 导出</button>
+    </div>
+    <table>
+      <thead><tr><th>代理地址</th><th>延迟</th><th>国家</th><th>最后验证</th><th>操作</th></tr></thead>
+      <tbody id="tbl"></tbody>
+    </table>
+  </div>
+</div>
+<script>
+let KEY=localStorage.getItem('ppk')||'', proxies=[];
+document.getElementById('apiKey').value=KEY;
+
+function saveKey(){
+  KEY=document.getElementById('apiKey').value.trim();
+  localStorage.setItem('ppk',KEY);
+  showAlert('mainAlert','API Key 已保存','ok');
+  loadAll();
+}
+function H(){return{'X-API-Key':KEY,'Content-Type':'application/json'};}
+async function req(url,opts={}){
+  const r=await fetch(url,{headers:H(),...opts});
+  if(!r.ok){const e=await r.json().catch(()=>({detail:r.statusText}));throw new Error(e.detail||r.statusText);}
+  return r.json();
+}
+function showAlert(id,msg,cls){
+  const el=document.getElementById(id);
+  el.innerHTML=`<div class="alert ${cls}">${msg}</div>`;
+  setTimeout(()=>el.innerHTML='',3500);
+}
+async function loadStats(){
+  try{
+    const s=await req('/stats');
+    document.getElementById('sw').textContent=s.working;
+    document.getElementById('st').textContent=s.total_tested;
+    document.getElementById('sn').textContent=s.next_refresh_in;
+    const sc=document.getElementById('sc');
+    if(s.refreshing){
+      document.getElementById('ss').textContent='测试中';
+      sc.classList.add('refreshing');
+      document.getElementById('pb').style.width='100%';
+    } else {
+      document.getElementById('ss').textContent='空闲';
+      sc.classList.remove('refreshing');
+      const pct=s.next_refresh_in>0?Math.round((1-s.next_refresh_in/CONFIG_INTERVAL)*100):100;
+      document.getElementById('pb').style.width=pct+'%';
+    }
+  }catch(e){}
+}
+let CONFIG_INTERVAL=600;
+async function loadProxies(){
+  try{
+    const d=await req('/list?limit=2000');
+    proxies=d.proxies;
+    document.getElementById('cnt').textContent='共 '+d.count+' 个';
+    const cc=[...new Set(proxies.map(p=>p.country).filter(Boolean))].sort();
+    const sel=document.getElementById('fCC'),cur=sel.value;
+    sel.innerHTML='<option value="">所有国家</option>'+cc.map(c=>`<option value="${c}">${c}</option>`).join('');
+    sel.value=cur;
+    render();
+  }catch(e){showAlert('mainAlert','加载失败: '+e.message,'fail');}
+}
+function render(){
+  const h=document.getElementById('fHost').value.toLowerCase();
+  const cc=document.getElementById('fCC').value;
+  const sp=document.getElementById('fSpd').value;
+  let list=proxies.filter(p=>{
+    if(h&&!p.proxy.toLowerCase().includes(h))return false;
+    if(cc&&p.country!==cc)return false;
+    if(sp==='f'&&p.ms>=1000)return false;
+    if(sp==='m'&&(p.ms<1000||p.ms>=3000))return false;
+    if(sp==='s'&&p.ms<3000)return false;
+    return true;
+  });
+  const tb=document.getElementById('tbl');
+  if(!list.length){tb.innerHTML="<tr><td colspan='5' style='text-align:center;color:#475569;padding:20px'>暂无数据</td></tr>";return;}
+  tb.innerHTML=list.map(p=>{
+    const bc=p.ms<1000?'bg':p.ms<3000?'by':'br';
+    const t=p.ok_at?new Date(p.ok_at*1000).toLocaleTimeString():'-';
+    return `<tr><td>${p.proxy}</td><td><span class="badge ${bc}">${p.ms}ms</span></td><td>${p.country||'-'}</td><td>${t}</td><td><button class="btn btn-blue btn-sm" onclick="testOne('${p.proxy}')">测试</button> <button class="btn btn-red btn-sm" onclick="delProxy('${p.proxy}')">删除</button></td></tr>`;
+  }).join('');
+}
+async function triggerRefresh(){
+  try{
+    await req('/refresh',{method:'POST'});
+    showAlert('mainAlert','刷新已触发，后台运行中...','ok');
+    const b=document.getElementById('btnR');b.disabled=true;
+    setTimeout(()=>b.disabled=false,15000);
+  }catch(e){showAlert('mainAlert','失败: '+e.message,'fail');}
+}
+async function getOne(){
+  try{
+    const d=await req('/get');
+    showAlert('mainAlert','随机代理: '+d.proxy+'  '+d.ms+'ms  '+(d.country||''),'ok');
+  }catch(e){showAlert('mainAlert','失败: '+e.message,'fail');}
+}
+function testOne(p){document.getElementById('testInput').value=p;doTest();}
+async function doTest(){
+  const p=document.getElementById('testInput').value.trim();
+  if(!p)return;
+  const el=document.getElementById('testResult');
+  el.className='result-box';el.textContent='测试中...';
+  try{
+    const d=await req('/test-proxy?proxy='+encodeURIComponent(p));
+    if(d.ok) el.textContent='OK\n代理: '+d.proxy+'\n延迟: '+d.ms+'ms\n出口IP: '+(d.ip||'-');
+    else{el.className='result-box err';el.textContent='FAIL\n'+d.error;}
+  }catch(e){el.className='result-box err';el.textContent='ERROR: '+e.message;}
+}
+async function testRandom(){
+  try{const d=await req('/get');document.getElementById('testInput').value=d.proxy;doTest();}catch(e){}
+}
+async function addProxy(){
+  const p=document.getElementById('addHost').value.trim();
+  const cc=document.getElementById('addCC').value.trim();
+  if(!p)return;
+  try{
+    await req('/add-proxy',{method:'POST',body:JSON.stringify({proxy:p,country:cc})});
+    showAlert('mainAlert','已添加 '+p,'ok');
+    document.getElementById('addHost').value='';
+    loadProxies();
+  }catch(e){showAlert('mainAlert','失败: '+e.message,'fail');}
+}
+async function delProxy(p){
+  try{
+    await req('/remove-proxy',{method:'POST',body:JSON.stringify({proxy:p})});
+    proxies=proxies.filter(x=>x.proxy!==p);
+    render();
+    document.getElementById('cnt').textContent='共 '+proxies.length+' 个';
+  }catch(e){showAlert('mainAlert','删除失败: '+e.message,'fail');}
+}
+async function loadConfig(){
+  try{
+    const d=await req('/config');
+    CONFIG_INTERVAL=d.refresh_interval||600;
+    document.getElementById('ci').value=d.refresh_interval;
+    document.getElementById('cw').value=d.max_workers;
+    document.getElementById('ct').value=d.timeout;
+    document.getElementById('cu').value=d.test_url;
+  }catch(e){}
+}
+async function saveConfig(){
+  try{
+    await req('/config',{method:'POST',body:JSON.stringify({
+      refresh_interval:+document.getElementById('ci').value,
+      max_workers:+document.getElementById('cw').value,
+      timeout:+document.getElementById('ct').value,
+      test_url:document.getElementById('cu').value
+    })});
+    showAlert('cfgAlert','配置已保存','ok');
+  }catch(e){showAlert('cfgAlert','失败: '+e.message,'fail');}
+}
+function exportList(){
+  const lines=proxies.map(p=>p.proxy).join('\n');
+  const a=document.createElement('a');
+  a.href='data:text/plain;charset=utf-8,'+encodeURIComponent(lines);
+  a.download='proxies.txt';a.click();
+}
+function loadAll(){loadStats();loadProxies();loadConfig();}
+loadAll();
+setInterval(loadStats,5000);
+setInterval(loadProxies,30000);
+</script>
+</body>
+</html>
