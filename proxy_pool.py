@@ -183,7 +183,7 @@ class ProxyPool:
         if res:
             p, ms, out = res
             try: ip = json.loads(out).get("ip","")
-            except: ip = out
+            except Exception: ip = out
             return {"ok":True,"proxy":p,"ms":ms,"ip":ip}
         return {"ok":False,"proxy":proxy,"error":"连接失败或超时"}
 
